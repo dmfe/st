@@ -103,25 +103,26 @@ typedef struct {
 } TermWindow;
 
 typedef struct {
-    Display *dpy;
-    Colormap cmap;
-    Window win;
-    Drawable buf;
-    GlyphFontSpec *specbuf; /* font spec buffer used for rendering */
-    Atom xembed, wmdeletewin, netwmname, netwmiconname, netwmpid;
-    struct {
-        XIM xim;
-        XIC xic;
-        XPoint spot;
-        XVaNestedList spotlist;
-    } ime;
-    Draw draw;
-    Visual *vis;
-    XSetWindowAttributes attrs;
-    int scr;
-    int isfixed; /* is fixed geometry? */
-    int l, t; /* left and top offset */
-    int gm; /* geometry mask */
+	Display *dpy;
+	Colormap cmap;
+	Window win;
+	Drawable buf;
+	GlyphFontSpec *specbuf; /* font spec buffer used for rendering */
+	Atom xembed, wmdeletewin, netwmname, netwmiconname, netwmpid;
+	struct {
+		XIM xim;
+		XIC xic;
+		XPoint spot;
+		XVaNestedList spotlist;
+	} ime;
+	Draw draw;
+	Visual *vis;
+	XSetWindowAttributes attrs;
+	int scr;
+	int isfixed; /* is fixed geometry? */
+	int depth; /* bit depth */
+	int l, t; /* left and top offset */
+	int gm; /* geometry mask */
 } XWindow;
 
 typedef struct {
@@ -258,6 +259,7 @@ static char *usedfont = NULL;
 static double usedfontsize = 0;
 static double defaultfontsize = 0;
 
+static char *opt_alpha = NULL;
 static char *opt_class = NULL;
 static char **opt_cmd  = NULL;
 static char *opt_embed = NULL;
@@ -751,11 +753,11 @@ xresize(int col, int row)
     win.tw = col * win.cw;
     win.th = row * win.ch;
 
-    XFreePixmap(xw.dpy, xw.buf);
-    xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h,
-            DefaultDepth(xw.dpy, xw.scr));
-    XftDrawChange(xw.draw, xw.buf);
-    xclear(0, 0, win.w, win.h);
+	XFreePixmap(xw.dpy, xw.buf);
+	xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h,
+			xw.depth);
+	XftDrawChange(xw.draw, xw.buf);
+	xclear(0, 0, win.w, win.h);
 
     /* resize to new width */
     xw.specbuf = xrealloc(xw.specbuf, col * sizeof(GlyphFontSpec));
@@ -806,14 +808,21 @@ xloadcols(void)
         dc.col = xmalloc(dc.collen * sizeof(Color));
     }
 
-    for (i = 0; i < dc.collen; i++)
-        if (!xloadcolor(i, NULL, &dc.col[i])) {
-            if (colorname[i])
-                die("could not allocate color '%s'\n", colorname[i]);
-            else
-                die("could not allocate color %d\n", i);
-        }
-    loaded = 1;
+	for (i = 0; i < dc.collen; i++)
+		if (!xloadcolor(i, NULL, &dc.col[i])) {
+			if (colorname[i])
+				die("could not allocate color '%s'\n", colorname[i]);
+			else
+				die("could not allocate color %d\n", i);
+		}
+
+	/* set alpha value of bg color */
+	if (opt_alpha)
+		alpha = strtof(opt_alpha, NULL);
+	dc.col[defaultbg].color.alpha = (unsigned short)(0xffff * alpha);
+	dc.col[defaultbg].pixel &= 0x00FFFFFF;
+	dc.col[defaultbg].pixel |= (unsigned char)(0xff * alpha) << 24;
+	loaded = 1;
 }
 
 int
@@ -1122,9 +1131,21 @@ xinit(int cols, int rows)
 	Window parent;
 	pid_t thispid = getpid();
 	XColor xmousefg, xmousebg;
+	XWindowAttributes attr;
+	XVisualInfo vis;
 
 	xw.scr = XDefaultScreen(xw.dpy);
-	xw.vis = XDefaultVisual(xw.dpy, xw.scr);
+
+	if (!(opt_embed && (parent = strtol(opt_embed, NULL, 0)))) {
+		parent = XRootWindow(xw.dpy, xw.scr);
+		xw.depth = 32;
+	} else {
+		XGetWindowAttributes(xw.dpy, parent, &attr);
+		xw.depth = attr.depth;
+	}
+
+	XMatchVisualInfo(xw.dpy, xw.scr, xw.depth, TrueColor, &vis);
+	xw.vis = vis.visual;
 
 	/* font */
 	if (!FcInit())
@@ -1134,7 +1155,7 @@ xinit(int cols, int rows)
 	xloadfonts(usedfont, 0);
 
 	/* colors */
-	xw.cmap = XDefaultColormap(xw.dpy, xw.scr);
+	xw.cmap = XCreateColormap(xw.dpy, parent, xw.vis, None);
 	xloadcols();
 
 	/* adjust fixed window geometry */
@@ -1154,19 +1175,15 @@ xinit(int cols, int rows)
 		| ButtonMotionMask | ButtonPressMask | ButtonReleaseMask;
 	xw.attrs.colormap = xw.cmap;
 
-	if (!(opt_embed && (parent = strtol(opt_embed, NULL, 0))))
-		parent = XRootWindow(xw.dpy, xw.scr);
 	xw.win = XCreateWindow(xw.dpy, parent, xw.l, xw.t,
-			win.w, win.h, 0, XDefaultDepth(xw.dpy, xw.scr), InputOutput,
+			win.w, win.h, 0, xw.depth, InputOutput,
 			xw.vis, CWBackPixel | CWBorderPixel | CWBitGravity
 			| CWEventMask | CWColormap, &xw.attrs);
 
 	memset(&gcvalues, 0, sizeof(gcvalues));
 	gcvalues.graphics_exposures = False;
-	dc.gc = XCreateGC(xw.dpy, parent, GCGraphicsExposures,
-			&gcvalues);
-	xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h,
-			DefaultDepth(xw.dpy, xw.scr));
+	xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h, xw.depth);
+	dc.gc = XCreateGC(xw.dpy, xw.buf, GCGraphicsExposures, &gcvalues);
 	XSetForeground(xw.dpy, dc.gc, dc.col[defaultbg].pixel);
 	XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, win.w, win.h);
 
@@ -2064,53 +2081,56 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
-    xw.l = xw.t = 0;
-    xw.isfixed = False;
-    xsetcursor(cursorshape);
+	xw.l = xw.t = 0;
+	xw.isfixed = False;
+	xsetcursor(cursorshape);
 
-    ARGBEGIN {
-    case 'a':
-        allowaltscreen = 0;
-        break;
-    case 'c':
-        opt_class = EARGF(usage());
-        break;
-    case 'e':
-        if (argc > 0)
-            --argc, ++argv;
-        goto run;
-    case 'f':
-        opt_font = EARGF(usage());
-        break;
-    case 'g':
-        xw.gm = XParseGeometry(EARGF(usage()),
-                &xw.l, &xw.t, &cols, &rows);
-        break;
-    case 'i':
-        xw.isfixed = 1;
-        break;
-    case 'o':
-        opt_io = EARGF(usage());
-        break;
-    case 'l':
-        opt_line = EARGF(usage());
-        break;
-    case 'n':
-        opt_name = EARGF(usage());
-        break;
-    case 't':
-    case 'T':
-        opt_title = EARGF(usage());
-        break;
-    case 'w':
-        opt_embed = EARGF(usage());
-        break;
-    case 'v':
-        die("%s " VERSION "\n", argv0);
-        break;
-    default:
-        usage();
-    } ARGEND;
+	ARGBEGIN {
+	case 'a':
+		allowaltscreen = 0;
+		break;
+	case 'A':
+		opt_alpha = EARGF(usage());
+		break;
+	case 'c':
+		opt_class = EARGF(usage());
+		break;
+	case 'e':
+		if (argc > 0)
+			--argc, ++argv;
+		goto run;
+	case 'f':
+		opt_font = EARGF(usage());
+		break;
+	case 'g':
+		xw.gm = XParseGeometry(EARGF(usage()),
+				&xw.l, &xw.t, &cols, &rows);
+		break;
+	case 'i':
+		xw.isfixed = 1;
+		break;
+	case 'o':
+		opt_io = EARGF(usage());
+		break;
+	case 'l':
+		opt_line = EARGF(usage());
+		break;
+	case 'n':
+		opt_name = EARGF(usage());
+		break;
+	case 't':
+	case 'T':
+		opt_title = EARGF(usage());
+		break;
+	case 'w':
+		opt_embed = EARGF(usage());
+		break;
+	case 'v':
+		die("%s " VERSION "\n", argv0);
+		break;
+	default:
+		usage();
+	} ARGEND;
 
 run:
 	if (argc > 0) /* eat all remaining arguments */
