@@ -14,6 +14,7 @@
 #include <X11/keysym.h>
 #include <X11/Xft/Xft.h>
 #include <X11/XKBlib.h>
+#include <X11/Xresource.h>
 
 char *argv0;
 #include "arg.h"
@@ -44,6 +45,19 @@ typedef struct {
     signed char appkey;    /* application keypad */
     signed char appcursor; /* application cursor */
 } Key;
+
+/* Xresources preferences */
+enum resource_type {
+	STRING = 0,
+	INTEGER = 1,
+	FLOAT = 2
+};
+
+typedef struct {
+	char *name;
+	enum resource_type type;
+	void *dst;
+} ResourcePref;
 
 /* X modifiers */
 #define XK_ANY_MOD    UINT_MAX
@@ -833,37 +847,37 @@ xclear(int x1, int y1, int x2, int y2)
 void
 xhints(void)
 {
-    XClassHint class = {opt_name ? opt_name : termname,
-                        opt_class ? opt_class : termname};
-    XWMHints wm = {.flags = InputHint, .input = 1};
-    XSizeHints *sizeh;
+	XClassHint class = {opt_name ? opt_name : "st",
+	                    opt_class ? opt_class : "St"};
+	XWMHints wm = {.flags = InputHint, .input = 1};
+	XSizeHints *sizeh;
 
-    sizeh = XAllocSizeHints();
+	sizeh = XAllocSizeHints();
 
-    sizeh->flags = PSize | PResizeInc | PBaseSize | PMinSize;
-    sizeh->height = win.h;
-    sizeh->width = win.w;
+	sizeh->flags = PSize | PResizeInc | PBaseSize | PMinSize;
+	sizeh->height = win.h;
+	sizeh->width = win.w;
     sizeh->height_inc = 1;
     sizeh->width_inc = 1;
-    sizeh->base_height = 2 * borderpx;
-    sizeh->base_width = 2 * borderpx;
-    sizeh->min_height = win.ch + 2 * borderpx;
-    sizeh->min_width = win.cw + 2 * borderpx;
-    if (xw.isfixed) {
-        sizeh->flags |= PMaxSize;
-        sizeh->min_width = sizeh->max_width = win.w;
-        sizeh->min_height = sizeh->max_height = win.h;
-    }
-    if (xw.gm & (XValue|YValue)) {
-        sizeh->flags |= USPosition | PWinGravity;
-        sizeh->x = xw.l;
-        sizeh->y = xw.t;
-        sizeh->win_gravity = xgeommasktogravity(xw.gm);
-    }
+	sizeh->base_height = 2 * borderpx;
+	sizeh->base_width = 2 * borderpx;
+	sizeh->min_height = win.ch + 2 * borderpx;
+	sizeh->min_width = win.cw + 2 * borderpx;
+	if (xw.isfixed) {
+		sizeh->flags |= PMaxSize;
+		sizeh->min_width = sizeh->max_width = win.w;
+		sizeh->min_height = sizeh->max_height = win.h;
+	}
+	if (xw.gm & (XValue|YValue)) {
+		sizeh->flags |= USPosition | PWinGravity;
+		sizeh->x = xw.l;
+		sizeh->y = xw.t;
+		sizeh->win_gravity = xgeommasktogravity(xw.gm);
+	}
 
-    XSetWMProperties(xw.dpy, xw.win, NULL, NULL, NULL, 0, sizeh, &wm,
-            &class);
-    XFree(sizeh);
+	XSetWMProperties(xw.dpy, xw.win, NULL, NULL, NULL, 0, sizeh, &wm,
+			&class);
+	XFree(sizeh);
 }
 
 int
@@ -1103,114 +1117,112 @@ xicdestroy(XIC xim, XPointer client, XPointer call)
 void
 xinit(int cols, int rows)
 {
-    XGCValues gcvalues;
-    Cursor cursor;
-    Window parent;
-    pid_t thispid = getpid();
-    XColor xmousefg, xmousebg;
+	XGCValues gcvalues;
+	Cursor cursor;
+	Window parent;
+	pid_t thispid = getpid();
+	XColor xmousefg, xmousebg;
 
-    if (!(xw.dpy = XOpenDisplay(NULL)))
-        die("can't open display\n");
-    xw.scr = XDefaultScreen(xw.dpy);
-    xw.vis = XDefaultVisual(xw.dpy, xw.scr);
+	xw.scr = XDefaultScreen(xw.dpy);
+	xw.vis = XDefaultVisual(xw.dpy, xw.scr);
 
-    /* font */
-    if (!FcInit())
-        die("could not init fontconfig.\n");
+	/* font */
+	if (!FcInit())
+		die("could not init fontconfig.\n");
 
-    usedfont = (opt_font == NULL)? font : opt_font;
-    xloadfonts(usedfont, 0);
+	usedfont = (opt_font == NULL)? font : opt_font;
+	xloadfonts(usedfont, 0);
 
-    /* colors */
-    xw.cmap = XDefaultColormap(xw.dpy, xw.scr);
-    xloadcols();
+	/* colors */
+	xw.cmap = XDefaultColormap(xw.dpy, xw.scr);
+	xloadcols();
 
-    /* adjust fixed window geometry */
-    win.w = 2 * win.hborderpx + cols * win.cw;
-    win.h = 2 * win.vborderpx + rows * win.ch;
-    if (xw.gm & XNegative)
-        xw.l += DisplayWidth(xw.dpy, xw.scr) - win.w - 2;
-    if (xw.gm & YNegative)
-        xw.t += DisplayHeight(xw.dpy, xw.scr) - win.h - 2;
+	/* adjust fixed window geometry */
+	win.w = 2 * borderpx + cols * win.cw;
+	win.h = 2 * borderpx + rows * win.ch;
+	if (xw.gm & XNegative)
+		xw.l += DisplayWidth(xw.dpy, xw.scr) - win.w - 2;
+	if (xw.gm & YNegative)
+		xw.t += DisplayHeight(xw.dpy, xw.scr) - win.h - 2;
 
-    /* Events */
-    xw.attrs.background_pixel = dc.col[defaultbg].pixel;
-    xw.attrs.border_pixel = dc.col[defaultbg].pixel;
-    xw.attrs.bit_gravity = NorthWestGravity;
-    xw.attrs.event_mask = FocusChangeMask | KeyPressMask | KeyReleaseMask
-        | ExposureMask | VisibilityChangeMask | StructureNotifyMask
-        | ButtonMotionMask | ButtonPressMask | ButtonReleaseMask;
-    xw.attrs.colormap = xw.cmap;
+	/* Events */
+	xw.attrs.background_pixel = dc.col[defaultbg].pixel;
+	xw.attrs.border_pixel = dc.col[defaultbg].pixel;
+	xw.attrs.bit_gravity = NorthWestGravity;
+	xw.attrs.event_mask = FocusChangeMask | KeyPressMask | KeyReleaseMask
+		| ExposureMask | VisibilityChangeMask | StructureNotifyMask
+		| ButtonMotionMask | ButtonPressMask | ButtonReleaseMask;
+	xw.attrs.colormap = xw.cmap;
 
-    if (!(opt_embed && (parent = strtol(opt_embed, NULL, 0))))
-        parent = XRootWindow(xw.dpy, xw.scr);
-    xw.win = XCreateWindow(xw.dpy, parent, xw.l, xw.t,
-            win.w, win.h, 0, XDefaultDepth(xw.dpy, xw.scr), InputOutput,
-            xw.vis, CWBackPixel | CWBorderPixel | CWBitGravity
-            | CWEventMask | CWColormap, &xw.attrs);
+	if (!(opt_embed && (parent = strtol(opt_embed, NULL, 0))))
+		parent = XRootWindow(xw.dpy, xw.scr);
+	xw.win = XCreateWindow(xw.dpy, parent, xw.l, xw.t,
+			win.w, win.h, 0, XDefaultDepth(xw.dpy, xw.scr), InputOutput,
+			xw.vis, CWBackPixel | CWBorderPixel | CWBitGravity
+			| CWEventMask | CWColormap, &xw.attrs);
 
-    memset(&gcvalues, 0, sizeof(gcvalues));
-    gcvalues.graphics_exposures = False;
-    dc.gc = XCreateGC(xw.dpy, parent, GCGraphicsExposures,
-            &gcvalues);
-    xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h,
-            DefaultDepth(xw.dpy, xw.scr));
-    XSetForeground(xw.dpy, dc.gc, dc.col[defaultbg].pixel);
-    XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, win.w, win.h);
+	memset(&gcvalues, 0, sizeof(gcvalues));
+	gcvalues.graphics_exposures = False;
+	dc.gc = XCreateGC(xw.dpy, parent, GCGraphicsExposures,
+			&gcvalues);
+	xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h,
+			DefaultDepth(xw.dpy, xw.scr));
+	XSetForeground(xw.dpy, dc.gc, dc.col[defaultbg].pixel);
+	XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, win.w, win.h);
 
-    /* font spec buffer */
-    xw.specbuf = xmalloc(cols * sizeof(GlyphFontSpec));
+	/* font spec buffer */
+	xw.specbuf = xmalloc(cols * sizeof(GlyphFontSpec));
 
-    /* Xft rendering context */
-    xw.draw = XftDrawCreate(xw.dpy, xw.buf, xw.vis, xw.cmap);
+	/* Xft rendering context */
+	xw.draw = XftDrawCreate(xw.dpy, xw.buf, xw.vis, xw.cmap);
 
-    /* input methods */
-    if (!ximopen(xw.dpy)) {
-        XRegisterIMInstantiateCallback(xw.dpy, NULL, NULL, NULL,
-                                           ximinstantiate, NULL);
-    }
+	/* input methods */
+	if (!ximopen(xw.dpy)) {
+		XRegisterIMInstantiateCallback(xw.dpy, NULL, NULL, NULL,
+	                                       ximinstantiate, NULL);
+	}
 
-    /* white cursor, black outline */
-    cursor = XCreateFontCursor(xw.dpy, mouseshape);
-    XDefineCursor(xw.dpy, xw.win, cursor);
+	/* white cursor, black outline */
+	cursor = XCreateFontCursor(xw.dpy, mouseshape);
+	XDefineCursor(xw.dpy, xw.win, cursor);
 
-    if (XParseColor(xw.dpy, xw.cmap, colorname[mousefg], &xmousefg) == 0) {
-        xmousefg.red   = 0xffff;
-        xmousefg.green = 0xffff;
-        xmousefg.blue  = 0xffff;
-    }
+	if (XParseColor(xw.dpy, xw.cmap, colorname[mousefg], &xmousefg) == 0) {
+		xmousefg.red   = 0xffff;
+		xmousefg.green = 0xffff;
+		xmousefg.blue  = 0xffff;
+	}
 
-    if (XParseColor(xw.dpy, xw.cmap, colorname[mousebg], &xmousebg) == 0) {
-        xmousebg.red   = 0x0000;
-        xmousebg.green = 0x0000;
-        xmousebg.blue  = 0x0000;
-    }
+	if (XParseColor(xw.dpy, xw.cmap, colorname[mousebg], &xmousebg) == 0) {
+		xmousebg.red   = 0x0000;
+		xmousebg.green = 0x0000;
+		xmousebg.blue  = 0x0000;
+	}
 
-    XRecolorCursor(xw.dpy, cursor, &xmousefg, &xmousebg);
+	XRecolorCursor(xw.dpy, cursor, &xmousefg, &xmousebg);
 
-    xw.xembed = XInternAtom(xw.dpy, "_XEMBED", False);
-    xw.wmdeletewin = XInternAtom(xw.dpy, "WM_DELETE_WINDOW", False);
-    xw.netwmname = XInternAtom(xw.dpy, "_NET_WM_NAME", False);
-    xw.netwmiconname = XInternAtom(xw.dpy, "_NET_WM_ICON_NAME", False);
-    XSetWMProtocols(xw.dpy, xw.win, &xw.wmdeletewin, 1);
+	xw.xembed = XInternAtom(xw.dpy, "_XEMBED", False);
+	xw.wmdeletewin = XInternAtom(xw.dpy, "WM_DELETE_WINDOW", False);
+	xw.netwmname = XInternAtom(xw.dpy, "_NET_WM_NAME", False);
+	xw.netwmiconname = XInternAtom(xw.dpy, "_NET_WM_ICON_NAME", False);
+	XSetWMProtocols(xw.dpy, xw.win, &xw.wmdeletewin, 1);
 
-    xw.netwmpid = XInternAtom(xw.dpy, "_NET_WM_PID", False);
-    XChangeProperty(xw.dpy, xw.win, xw.netwmpid, XA_CARDINAL, 32,
-            PropModeReplace, (uchar *)&thispid, 1);
+	xw.netwmpid = XInternAtom(xw.dpy, "_NET_WM_PID", False);
+	XChangeProperty(xw.dpy, xw.win, xw.netwmpid, XA_CARDINAL, 32,
+			PropModeReplace, (uchar *)&thispid, 1);
 
-    win.mode = MODE_NUMLOCK;
-    resettitle();
-    xhints();
-    XMapWindow(xw.dpy, xw.win);
-    XSync(xw.dpy, False);
+	win.mode = MODE_NUMLOCK;
+	resettitle();
+	xhints();
+	XMapWindow(xw.dpy, xw.win);
+	XSync(xw.dpy, False);
 
-    clock_gettime(CLOCK_MONOTONIC, &xsel.tclick1);
-    clock_gettime(CLOCK_MONOTONIC, &xsel.tclick2);
-    xsel.primary = NULL;
-    xsel.clipboard = NULL;
-    xsel.xtarget = XInternAtom(xw.dpy, "UTF8_STRING", 0);
-    if (xsel.xtarget == None)
-        xsel.xtarget = XA_STRING;
+	clock_gettime(CLOCK_MONOTONIC, &xsel.tclick1);
+	clock_gettime(CLOCK_MONOTONIC, &xsel.tclick2);
+	xsel.primary = NULL;
+	xsel.clipboard = NULL;
+	xsel.xtarget = XInternAtom(xw.dpy, "UTF8_STRING", 0);
+	if (xsel.xtarget == None)
+		xsel.xtarget = XA_STRING;
 }
 
 int
@@ -1983,6 +1995,59 @@ run(void)
     }
 }
 
+int
+resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst)
+{
+	char **sdst = dst;
+	int *idst = dst;
+	float *fdst = dst;
+
+	char fullname[256];
+	char fullclass[256];
+	char *type;
+	XrmValue ret;
+
+	snprintf(fullname, sizeof(fullname), "%s.%s",
+			opt_name ? opt_name : "st", name);
+	snprintf(fullclass, sizeof(fullclass), "%s.%s",
+			opt_class ? opt_class : "St", name);
+	fullname[sizeof(fullname) - 1] = fullclass[sizeof(fullclass) - 1] = '\0';
+
+	XrmGetResource(db, fullname, fullclass, &type, &ret);
+	if (ret.addr == NULL || strncmp("String", type, 64))
+		return 1;
+
+	switch (rtype) {
+	case STRING:
+		*sdst = ret.addr;
+		break;
+	case INTEGER:
+		*idst = strtoul(ret.addr, NULL, 10);
+		break;
+	case FLOAT:
+		*fdst = strtof(ret.addr, NULL);
+		break;
+	}
+	return 0;
+}
+
+void
+config_init(void)
+{
+	char *resm;
+	XrmDatabase db;
+	ResourcePref *p;
+
+	XrmInitialize();
+	resm = XResourceManagerString(xw.dpy);
+	if (!resm)
+		return;
+
+	db = XrmGetStringDatabase(resm);
+	for (p = resources; p < resources + LEN(resources); p++)
+		resource_load(db, p->name, p->type, p->dst);
+}
+
 void
 usage(void)
 {
@@ -2048,21 +2113,26 @@ main(int argc, char *argv[])
     } ARGEND;
 
 run:
-    if (argc > 0) /* eat all remaining arguments */
-        opt_cmd = argv;
+	if (argc > 0) /* eat all remaining arguments */
+		opt_cmd = argv;
 
-    if (!opt_title)
-        opt_title = (opt_line || !opt_cmd) ? "st" : opt_cmd[0];
+	if (!opt_title)
+		opt_title = (opt_line || !opt_cmd) ? "st" : opt_cmd[0];
 
-    setlocale(LC_CTYPE, "");
-    XSetLocaleModifiers("");
-    cols = MAX(cols, 1);
-    rows = MAX(rows, 1);
-    tnew(cols, rows);
-    xinit(cols, rows);
-    xsetenv();
-    selinit();
-    run();
+	setlocale(LC_CTYPE, "");
+	XSetLocaleModifiers("");
 
-    return 0;
+	if(!(xw.dpy = XOpenDisplay(NULL)))
+		die("Can't open display\n");
+
+	config_init();
+	cols = MAX(cols, 1);
+	rows = MAX(rows, 1);
+	tnew(cols, rows);
+	xinit(cols, rows);
+	xsetenv();
+	selinit();
+	run();
+
+	return 0;
 }
